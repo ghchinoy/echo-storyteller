@@ -1,0 +1,32 @@
+# General
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.swp
+.env
+
+# Git
+.git/
+
+# Backend (Go)
+backend/server
+backend/*.exe
+backend/*.test
+backend/*.out
+backend/vendor/
+# Exclude local binaries/artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Frontend (Flutter)
+# Note: frontend/ has its own .gitignore, but adding high-level build dirs here helps generic tools
+frontend/build/
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+
+.commit.txt
+

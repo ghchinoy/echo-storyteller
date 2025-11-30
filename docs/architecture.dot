@@ -1,0 +1,71 @@
+digraph EchoArchitecture {
+    rankdir=TB;
+    node [shape=box, style=filled, fontname="Helvetica"];
+    
+    // Clients
+    subgraph cluster_frontend {
+        label = "Frontend (Flutter Web)";
+        style = filled;
+        color = "#FAFAFA";
+        
+        UI [label="EchoScreen\n(RichText)", fillcolor="#E1BEE7"];
+        WSClient [label="WebSocket Channel", fillcolor="#E1BEE7"];
+        PcmPlayer [label="PcmPlayer\n(Web Audio API)", fillcolor="#D1C4E9", penwidth=2];
+        AudioContext [label="AudioContext\n(Browser Native)", shape=ellipse, fillcolor="#F5F5F5"];
+    }
+
+    // Server
+    subgraph cluster_backend {
+        label = "Backend (Go)";
+        style = filled;
+        color = "#E0F7FA";
+        
+        WSHandler [label="WebSocket Handler", fillcolor="#B3E5FC"];
+        StoryLoop [label="Story Generator\n(Loop)", fillcolor="#B3E5FC"];
+        
+        subgraph cluster_gemini {
+            label = "GenAI Pipeline";
+            style = dashed;
+            GeminiClient [label="Gemini Client\n(GenerateContentStream)", fillcolor="#FFF9C4"];
+            SentenceBuffer [label="Sentence Buffer\n(Text Accumulator)", fillcolor="#FFF9C4"];
+        }
+        
+        TTSClient [label="TTS Client\n(StreamingSynthesize)", fillcolor="#FFF9C4"];
+    }
+
+    // Cloud
+    subgraph cluster_gcp {
+        label = "Google Cloud";
+        style = dotted;
+        VertexAI [label="Vertex AI\n(Gemini 2.5 Flash)", shape=cloud, fillcolor="#FFFFFF"];
+        CloudTTS [label="Cloud TTS\n(Gemini/Journey Voice)", shape=cloud, fillcolor="#FFFFFF"];
+    }
+
+    // Flow
+    UI -> WSClient [label="1. Send Topic"];
+    WSClient -> WSHandler [label="WS Message"];
+    WSHandler -> StoryLoop [label="Topic"];
+    
+    StoryLoop -> GeminiClient [label="2. Prompt"];
+    GeminiClient -> VertexAI [label="RPC"];
+    VertexAI -> GeminiClient [label="Token Stream"];
+    
+    GeminiClient -> SentenceBuffer [label="Tokens"];
+    SentenceBuffer -> StoryLoop [label="Full Sentence"];
+    
+    // Parallel Pipe
+    StoryLoop -> WSHandler [label="3a. Send Text (Subtitle)"];
+    StoryLoop -> TTSClient [label="3b. Send Text (Input)"];
+    
+    TTSClient -> CloudTTS [label="RPC (LINEAR16)"];
+    CloudTTS -> TTSClient [label="Audio Chunks"];
+    
+    TTSClient -> WSHandler [label="Audio Bytes"];
+    WSHandler -> WSClient [label="4. Binary Message"];
+    
+    // Playback
+    WSClient -> UI [label="Text Update"];
+    WSClient -> PcmPlayer [label="Feed Bytes + Pending Text"];
+    PcmPlayer -> AudioContext [label="decode -> schedule"];
+    PcmPlayer -> UI [label="Sync Event (Highlight Text)"];
+}

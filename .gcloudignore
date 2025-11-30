@@ -1,0 +1,22 @@
+# Include the .gitignore configuration
+#!include:.gitignore
+
+# Explicitly ignore git metadata
+.git/
+.gitignore
+
+# Ignore local environment configuration
+.env
+
+# Ignore editor config
+.vscode/
+.idea/
+
+# Ignore documentation for deployment
+docs/
+
+# Ignore frontend dev files if we are just deploying the backend (adjust as needed for your deployment strategy)
+# frontend/
+
+# Ignore the dev script
+dev.sh
