@@ -25,6 +25,9 @@
 *   **Deployment:**
     *   Use `setup_sa.sh` to provision a dedicated Service Account with `aiplatform.user` and `logging.logWriter`.
     *   Env vars `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` are mandatory for Vertex AI.
+*   **GenAI & TTS Orchestration:**
+    *   **Quantized Streaming:** For Gemini TTS models, you **MUST** re-initialize the `StreamingSynthesize` stream for *each* sentence. This avoids the ~512-byte server-side context limit which causes `INVALID_ARGUMENT` errors on long streams.
+    *   **Producer-Consumer:** Use a `Goroutine` (Producer) for Text/Image generation and a main loop (Consumer) for TTS feeding. Connect them with a buffered channel (`sentenceChan`). This prevents head-of-line blocking and allows text/images to appear on the client while audio is still processing.
 
 ## 3. Frontend (Flutter)
 
@@ -35,9 +38,11 @@
 *   **State Management:**
     *   Use `setState` for simple prototypes.
     *   Metrics (TTFB) must be tracked to validate performance.
-*   **UI:**
-    *   Minimalist Material 3.
-    *   Always show connectivity status ("Connected", "Streaming", "Disconnected").
+*   **UI & Animation:**
+    *   **Minimalist Material 3:** Stick to the "Storybook" aesthetic.
+    *   **Input Layout:** `[TextField] [Controls] [FAB]`. Place suggestion chips *below* this row.
+    *   **Entrance Animations:** Use `AnimatedSize` and `AnimatedOpacity` for *all* new content (Images, Titles) entering the stream. Avoid harsh layout jumps.
+    *   **Connectivity:** Always show connectivity status ("Connected", "Streaming", "Disconnected").
 *   **Environment Awareness:**
     *   Use `kDebugMode` to toggle between `localhost` (Dev) and Relative Paths (Production) for API calls.
 
