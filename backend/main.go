@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -17,6 +18,11 @@ import (
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+type StoryRequest struct {
+	Topic string `json:"topic"`
+	Voice string `json:"voice"`
 }
 
 func main() {
@@ -76,11 +82,25 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			log.Printf("WS Read Error: %v", err)
 			break
 		}
-		topic := string(message)
-		log.Printf("Topic: %s", topic)
+		
+		// Parse Payload (JSON or Raw String)
+		var topic string
+		var voice string = "Puck"
+
+		var req StoryRequest
+		if err := json.Unmarshal(message, &req); err == nil && req.Topic != "" {
+			topic = req.Topic
+			if req.Voice != "" {
+				voice = req.Voice
+			}
+		} else {
+			topic = string(message)
+		}
+
+		log.Printf("Topic: %s | Voice: %s", topic, voice)
 
 		if genaiClient != nil {
-			if err := streamStory(ctx, genaiClient, ttsClient, conn, topic); err != nil {
+			if err := streamStory(ctx, genaiClient, ttsClient, conn, topic, voice); err != nil {
 				log.Printf("Story Error: %v", err)
 			}
 		} else {
@@ -89,17 +109,21 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func streamStory(ctx context.Context, genClient *genai.Client, ttsClient *texttospeech.Client, wsConn *websocket.Conn, topic string) error {
+func streamStory(ctx context.Context, genClient *genai.Client, ttsClient *texttospeech.Client, wsConn *websocket.Conn, topic string, voice string) error {
+	log.Printf("Starting Story Generation for topic: %s (Voice: %s)", topic, voice)
+	
 	ttsStream, err := ttsClient.StreamingSynthesize(ctx)
 	if err != nil {
+		log.Printf("TTS StreamingSynthesize failed: %v", err)
 		return err
 	}
 
+	log.Printf("Sending TTS Config...")
 	err = ttsStream.Send(&texttospeechpb.StreamingSynthesizeRequest{
 		StreamingRequest: &texttospeechpb.StreamingSynthesizeRequest_StreamingConfig{
 			StreamingConfig: &texttospeechpb.StreamingSynthesizeConfig{
 				Voice: &texttospeechpb.VoiceSelectionParams{
-					Name:         "Puck",
+					Name:         voice,
 					LanguageCode: "en-US",
 					ModelName:    "gemini-2.5-flash-tts",
 				},
@@ -107,29 +131,37 @@ func streamStory(ctx context.Context, genClient *genai.Client, ttsClient *textto
 		},
 	})
 	if err != nil {
+		log.Printf("TTS Config Send failed: %v", err)
 		return err
 	}
 
 	ttsDone := make(chan error)
 	go func() {
 		defer close(ttsDone)
+		var totalBytes int
 		for {
 			resp, err := ttsStream.Recv()
 			if err == io.EOF {
+				log.Printf("TTS Stream Completed (EOF). Total Audio Bytes: %d", totalBytes)
 				ttsDone <- nil
 				return
 			}
 			if err != nil {
+				log.Printf("TTS Recv Error: %v", err)
 				ttsDone <- err
 				return
 			}
 			if len(resp.AudioContent) > 0 {
+				totalBytes += len(resp.AudioContent)
+				// log.Printf("Received Audio Chunk: %d bytes", len(resp.AudioContent)) // Verbose
 				wsConn.WriteMessage(websocket.BinaryMessage, resp.AudioContent)
 			}
 		}
 	}()
 
 	prompt := fmt.Sprintf("Tell a short, engaging story about: %s. Keep it under 100 words.", topic)
+	log.Printf("Gemini Prompt: %s", prompt)
+	
 	iter := genClient.Models.GenerateContentStream(ctx, "gemini-2.5-flash", genai.Text(prompt), nil)
 	
 	var buffer strings.Builder
@@ -147,6 +179,8 @@ func streamStory(ctx context.Context, genClient *genai.Client, ttsClient *textto
 				if strings.ContainsAny(part.Text, ".?!") || buffer.Len() > 100 {
 					sentence := strings.TrimSpace(buffer.String())
 					if len(sentence) > 0 {
+						log.Printf("Generated Sentence: %s", sentence)
+						
 						// 1. Send Text to Frontend (Subtitle)
 						wsConn.WriteMessage(websocket.TextMessage, []byte(sentence))
 						
@@ -159,6 +193,7 @@ func streamStory(ctx context.Context, genClient *genai.Client, ttsClient *textto
 							},
 						})
 						if err != nil {
+							log.Printf("TTS Send Text Error: %v", err)
 							return err
 						}
 						buffer.Reset()
@@ -171,6 +206,7 @@ func streamStory(ctx context.Context, genClient *genai.Client, ttsClient *textto
 	if buffer.Len() > 0 {
 		sentence := strings.TrimSpace(buffer.String())
 		if len(sentence) > 0 {
+			log.Printf("Generated Final Sentence: %s", sentence)
 			wsConn.WriteMessage(websocket.TextMessage, []byte(sentence))
 			ttsStream.Send(&texttospeechpb.StreamingSynthesizeRequest{
 				StreamingRequest: &texttospeechpb.StreamingSynthesizeRequest_Input{
@@ -182,11 +218,20 @@ func streamStory(ctx context.Context, genClient *genai.Client, ttsClient *textto
 		}
 	}
 
+	log.Printf("Gemini Stream Finished. Closing TTS Send...")
 	if err := ttsStream.CloseSend(); err != nil {
+		log.Printf("TTS CloseSend Error: %v", err)
 		return err
 	}
 
-	return <-ttsDone
+	log.Printf("Waiting for TTS to finish...")
+	finalErr := <-ttsDone
+	if finalErr != nil {
+		log.Printf("Story Generation Finished with Error: %v", finalErr)
+	} else {
+		log.Printf("Story Generation Finished Successfully.")
+	}
+	return finalErr
 }
 
 func streamTTS(ctx context.Context, client *texttospeech.Client, wsConn *websocket.Conn, text string) error {

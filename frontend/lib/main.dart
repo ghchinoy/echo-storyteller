@@ -1,6 +1,7 @@
-import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'audio/pcm_player.dart';
@@ -79,9 +80,17 @@ class _EchoScreenState extends State<EchoScreen> {
   final List<String> _transcript = [];
   final ScrollController _scrollController = ScrollController();
 
-  final String _voiceName = "Puck";
+  String _selectedVoice = "Puck";
   final String _modelName = "gemini-2.5-flash-tts";
   final String _stylePrompt = "Tell a short, engaging story. Keep it under 100 words.";
+
+  final List<String> _voices = [
+    "Achernar", "Achird", "Algenib", "Algieba", "Alnilam", "Aoede", "Autonoe",
+    "Callirrhoe", "Charon", "Despina", "Enceladus", "Erinome", "Fenrir", "Gacrux",
+    "Iapetus", "Kore", "Laomedeia", "Leda", "Orus", "Pulcherrima", "Puck",
+    "Rasalgethi", "Sadachbia", "Sadaltager", "Schedar", "Sulafat", "Umbriel",
+    "Vindemiatrix", "Zephyr", "Zubenelgenubi",
+  ];
 
   final List<String> _suggestions = [
     "A cyberpunk detective in Neo-Tokyo.",
@@ -114,9 +123,20 @@ class _EchoScreenState extends State<EchoScreen> {
     });
   }
 
+  Uri getWebSocketUrl() {
+    if (kDebugMode) {
+      return Uri.parse('ws://localhost:8080/ws');
+    }
+    
+    final currentUri = Uri.base;
+    final wsScheme = currentUri.scheme == 'https' ? 'wss' : 'ws';
+    return currentUri.replace(scheme: wsScheme, path: '/ws');
+  }
+
   void _connect() {
     try {
-      _channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080/ws'));
+      final wsUrl = getWebSocketUrl();
+      _channel = WebSocketChannel.connect(wsUrl);
       setState(() => _status = "Connected");
       
       _channel!.stream.listen((message) {
@@ -165,7 +185,11 @@ class _EchoScreenState extends State<EchoScreen> {
         _transcript.clear();
       });
 
-      _channel!.sink.add(text);
+      final payload = jsonEncode({
+        "topic": text,
+        "voice": _selectedVoice,
+      });
+      _channel!.sink.add(payload);
     }
   }
 
@@ -182,7 +206,7 @@ class _EchoScreenState extends State<EchoScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? Colors.white : Colors.black87;
     final dimColor = isDark ? Colors.white54 : Colors.black54;
-    final cardColor = isDark ? Colors.white.withOpacity(0.05) : Colors.white;
+    final cardColor = isDark ? Colors.white.withValues(alpha: 0.05) : Colors.white;
 
     return Scaffold(
       appBar: AppBar(
@@ -218,7 +242,7 @@ class _EchoScreenState extends State<EchoScreen> {
               children: [
                 // Status
                 Chip(
-                  backgroundColor: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+                  backgroundColor: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
                   side: BorderSide.none,
                   avatar: _isStreaming && _status != "Ready"
                       ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2))
@@ -228,8 +252,8 @@ class _EchoScreenState extends State<EchoScreen> {
                 // Latency
                 if (_ttfb != null)
                   Chip(
-                    backgroundColor: Colors.green.withOpacity(0.1),
-                    side: BorderSide(color: Colors.green.withOpacity(0.3)),
+                    backgroundColor: Colors.green.withValues(alpha: 0.1),
+                    side: BorderSide(color: Colors.green.withValues(alpha: 0.3)),
                     label: Text("TTFB: ${_ttfb}ms", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                   ),
                 // Voice Info
@@ -237,7 +261,7 @@ class _EchoScreenState extends State<EchoScreen> {
                   message: "Model: $_modelName\nEncoding: LINEAR16 (24kHz)",
                   child: Chip(
                     avatar: const Icon(Icons.record_voice_over, size: 16),
-                    label: Text("Voice: $_voiceName"),
+                    label: Text("Voice: $_selectedVoice"),
                   ),
                 ),
                 // Persona Info
@@ -263,7 +287,7 @@ class _EchoScreenState extends State<EchoScreen> {
                   border: Border.all(color: isDark ? Colors.white10 : Colors.black12),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
+                      color: Colors.black.withValues(alpha: 0.05),
                       blurRadius: 10,
                       spreadRadius: 2,
                     )
@@ -318,6 +342,36 @@ class _EchoScreenState extends State<EchoScreen> {
             // Input Area
             Row(
               children: [
+                // Voice Selector
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.white10 : Colors.grey[200],
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _selectedVoice,
+                      icon: Icon(Icons.arrow_drop_down, color: textColor),
+                      dropdownColor: isDark ? Colors.grey[900] : Colors.white,
+                      style: TextStyle(color: textColor),
+                      onChanged: _isStreaming ? null : (String? newValue) {
+                        if (newValue != null) {
+                          setState(() {
+                            _selectedVoice = newValue;
+                          });
+                        }
+                      },
+                      items: _voices.map<DropdownMenuItem<String>>((String value) {
+                        return DropdownMenuItem<String>(
+                          value: value,
+                          child: Text(value),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
                 Expanded(
                   child: TextField(
                     controller: _controller,

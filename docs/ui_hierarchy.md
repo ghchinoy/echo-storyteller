@@ -23,6 +23,7 @@
             3.  **Suggestion Chips** (`Wrap` -> `ActionChip`)
                 *   Quick-start prompts ("A cyberpunk detective...").
             4.  **Input Area** (`Row`)
+                *   **Voice Selector:** `DropdownButton` (Puck, Zephyr, etc.).
                 *   `TextField` (Rounded, Themed Fill).
                 *   `FloatingActionButton` (Send / Auto-Awesome Icon).
 
@@ -32,7 +33,7 @@
 *   **`_transcript` (`List<String>`):** Accumulates sentences received from the backend.
 *   **`_status` (`String`):** UI-facing status text.
 *   **`_ttfb` (`int?`):** Time to First Byte metric (ms).
-*   **`_pendingSubtitle` (`String?`):** Holds the latest text message from WS, waiting for the corresponding binary audio chunk to arrive.
+*   **`_selectedVoice` (`String`):** The currently selected voice (default: "Puck").
 *   **`_themeMode` (`ThemeMode`):** Toggles between Light/Dark.
 
 ### `PcmPlayer` (`lib/audio/pcm_player.dart`)

@@ -38,7 +38,7 @@ digraph EchoArchitecture {
         label = "Google Cloud";
         style = dotted;
         VertexAI [label="Vertex AI\n(Gemini 2.5 Flash)", shape=cloud, fillcolor="#FFFFFF"];
-        CloudTTS [label="Cloud TTS\n(Gemini/Journey Voice)", shape=cloud, fillcolor="#FFFFFF"];
+        CloudTTS [label="Cloud TTS\n(Gemini Voice)", shape=cloud, fillcolor="#FFFFFF"];
     }
 
     // Flow

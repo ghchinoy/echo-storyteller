@@ -1,22 +1,49 @@
-# Include the .gitignore configuration
-#!include:.gitignore
-
-# Explicitly ignore git metadata
+# Git & Config
 .git/
 .gitignore
-
-# Ignore local environment configuration
 .env
+.commit.txt
+dev.sh
+setup_sa.sh
+docs/
+.beads/
+GEMINI.md
+README.md
 
-# Ignore editor config
+# Backend Binaries
+backend/server
+backend/*.exe
+backend/*.test
+backend/*.out
+
+# Frontend - Selective Ignores
+# We want to keep the folder structure 'frontend/build/web' intact.
+# So we ignore the specific siblings of 'build' and 'web' that are heavy.
+
+# Ignore Source & Config
+frontend/lib/
+frontend/test/
+frontend/android/
+frontend/ios/
+frontend/linux/
+frontend/macos/
+frontend/windows/
+frontend/.dart_tool/
+frontend/.idea/
+frontend/pubspec.lock
+frontend/pubspec.yaml
+frontend/analysis_options.yaml
+frontend/*.iml
+
+# Ignore other build artifacts, but KEEP frontend/build/web
+frontend/build/native_assets/
+frontend/build/app/
+frontend/build/ios/
+frontend/build/linux/
+frontend/build/macos/
+frontend/build/windows/
+
+# Ignore IDEs
 .vscode/
 .idea/
-
-# Ignore documentation for deployment
-docs/
-
-# Ignore frontend dev files if we are just deploying the backend (adjust as needed for your deployment strategy)
-# frontend/
-
-# Ignore the dev script
-dev.sh
+*.iml
