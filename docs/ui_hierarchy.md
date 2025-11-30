@@ -8,24 +8,25 @@
 *   **Structure:**
     *   `Scaffold`
         *   `AppBar`
-            *   Title: "The Echo Storyteller"
+            *   Title: "The Echo Storyteller" (or "The Echo Storyteller: [Story Title]")
             *   Actions: Theme Toggle, Refresh.
         *   `Body` -> `Column`
             1.  **Header Info** (`Wrap`)
                 *   **Status Chip:** Connection State + Latency (TTFB).
-                *   **Metadata Chips:** Voice Name (Tooltip: Model/Encoding) + Persona (Tooltip: System Prompt).
+                *   **Metadata Chips:** Voice Name (Tooltip: Model/Encoding) + Persona (Tooltip: Persona).
             2.  **The Book** (`Expanded` -> `Container` -> `SingleChildScrollView`)
-                *   **Widget:** `SelectableText.rich`
+                *   **Story Body:** (`SelectableText.rich`)
                 *   **Logic:** Auto-scrolls to bottom on new text.
                 *   **Style:**
                     *   *Current Sentence:* Georgia Font, Large, High Contrast.
                     *   *Past Sentences:* Dimmed/Grey.
-            3.  **Suggestion Chips** (`Wrap` -> `ActionChip`)
-                *   Quick-start prompts ("A cyberpunk detective...").
-            4.  **Input Area** (`Row`)
+            3.  **Input Area** (`Row`)
+                *   **Story Input:** `TextField` (Rounded, Themed Fill).
                 *   **Voice Selector:** `DropdownButton` (Puck, Zephyr, etc.).
-                *   `TextField` (Rounded, Themed Fill).
-                *   `FloatingActionButton` (Send / Auto-Awesome Icon).
+                *   **Model Selector:** `DropdownButton` (Flash, Lite, Pro).
+                *   **Send Button:** `FloatingActionButton` (Auto-Awesome Icon).
+            4.  **Suggestion Chips** (`Wrap` -> `ActionChip`)
+                *   Quick-start prompts ("A cyberpunk detective...").
 
 ## State Management
 

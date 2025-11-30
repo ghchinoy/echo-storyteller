@@ -66,3 +66,24 @@ sequenceDiagram
     nextPlayTime += buffer.duration;
     ```
     This ensures that even if packets arrive with jitter, they are scheduled contiguously.
+
+## Gemini TTS & Streaming Limits
+
+### The 512-Byte Context Limit
+When using **Generative TTS models** (e.g., `gemini-2.5-flash-tts`) via `StreamingSynthesize`, there is an undocumented but strict limit on the "accumulated context" (input text + style prompt) of ~512 bytes. If a single gRPC stream is kept open and fed multiple sentences, the server treats the history as part of the generation prompt. Once this history exceeds ~512 bytes, the stream aborts with `INVALID_ARGUMENT`.
+
+### The "One Sentence, One Stream" Strategy
+To bypass this while maintaining a streaming UX, we implemented a **Producer-Consumer** architecture in Go:
+
+1.  **Producer (Goroutine):**
+    *   Consumes the Gemini Text Stream.
+    *   Splits text into sentences.
+    *   Sends text to Frontend immediately (via WebSocket).
+    *   Pushes sentences to a buffered Go Channel (`sentenceChan`).
+2.  **Consumer (Main Loop):**
+    *   Reads from `sentenceChan`.
+    *   **Re-initializes** the `StreamingSynthesize` connection for *each* sentence.
+    *   This ensures the context is flushed, avoiding the 512-byte limit.
+    *   Audio chunks are forwarded to the WebSocket in strict sequential order.
+
+This "quantized streaming" approach provides the best of both worlds: low-latency text display and stable, high-quality generative audio for long stories.

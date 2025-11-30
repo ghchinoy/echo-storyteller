@@ -77,12 +77,20 @@ class _EchoScreenState extends State<EchoScreen> {
   bool _isStreaming = false;
   String _status = "Ready";
   
+  String? _storyTitle;
+  Uint8List? _storyImage;
   final List<String> _transcript = [];
   final ScrollController _scrollController = ScrollController();
 
   String _selectedVoice = "Puck";
-  final String _modelName = "gemini-2.5-flash-tts";
+  String _selectedTTSModel = "gemini-2.5-flash-tts";
   final String _stylePrompt = "Tell a short, engaging story. Keep it under 100 words.";
+
+  final List<String> _ttsModels = [
+    "gemini-2.5-flash-tts",
+    "gemini-2.5-flash-lite-preview-tts",
+    "gemini-2.5-pro-tts",
+  ];
 
   final List<String> _voices = [
     "Achernar", "Achird", "Algenib", "Algieba", "Alnilam", "Aoede", "Autonoe",
@@ -143,11 +151,28 @@ class _EchoScreenState extends State<EchoScreen> {
         if (message is List<int>) {
           _handleAudioChunk(Uint8List.fromList(message));
         } else if (message is String) {
-          // Decoupled Text Logic: Display immediately
-          setState(() {
-            _transcript.add(message);
-          });
-          _scrollToBottom();
+          try {
+            final data = jsonDecode(message);
+            final type = data['type'];
+            final content = data['content'];
+
+            setState(() {
+              if (type == 'title') {
+                _storyTitle = content;
+              } else if (type == 'image') {
+                _storyImage = base64Decode(content);
+              } else {
+                _transcript.add(content);
+              }
+            });
+            _scrollToBottom();
+          } catch (e) {
+            // Fallback for legacy plain text (if any)
+             setState(() {
+              _transcript.add(message);
+            });
+            _scrollToBottom();
+          }
         }
       }, onError: (error) {
         setState(() => _status = "Connection Error");
@@ -183,11 +208,14 @@ class _EchoScreenState extends State<EchoScreen> {
         _status = "Dreaming...";
         _controller.text = text;
         _transcript.clear();
+        _storyTitle = null;
+        _storyImage = null;
       });
 
       final payload = jsonEncode({
         "topic": text,
         "voice": _selectedVoice,
+        "tts_model": _selectedTTSModel,
       });
       _channel!.sink.add(payload);
     }
@@ -212,7 +240,10 @@ class _EchoScreenState extends State<EchoScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Text("The Echo Storyteller", style: TextStyle(color: textColor)),
+        title: Text(
+          _storyTitle != null ? "The Echo Storyteller: $_storyTitle" : "The Echo Storyteller",
+          style: TextStyle(color: textColor),
+        ),
         actions: [
           IconButton(
             icon: Icon(
@@ -258,7 +289,7 @@ class _EchoScreenState extends State<EchoScreen> {
                   ),
                 // Voice Info
                 Tooltip(
-                  message: "Model: $_modelName\nEncoding: LINEAR16 (24kHz)",
+                  message: "Model: $_selectedTTSModel\nEncoding: LINEAR16 (24kHz)",
                   child: Chip(
                     avatar: const Icon(Icons.record_voice_over, size: 16),
                     label: Text("Voice: $_selectedVoice"),
@@ -266,8 +297,7 @@ class _EchoScreenState extends State<EchoScreen> {
                 ),
                 // Persona Info
                 Tooltip(
-                  message: "System Prompt:\n$_stylePrompt",
-                  child: const Chip(
+                                        message: "Persona:\n$_stylePrompt",                  child: const Chip(
                     avatar: Icon(Icons.psychology, size: 16),
                     label: Text("Persona: Storyteller"),
                   ),
@@ -295,27 +325,74 @@ class _EchoScreenState extends State<EchoScreen> {
                 ),
                 child: SingleChildScrollView(
                   controller: _scrollController,
-                  child: SelectableText.rich(
-                    TextSpan(
-                      children: _transcript.asMap().entries.map((entry) {
-                        final index = entry.key;
-                        final text = entry.value;
-                        // Highlight logic: Since text arrives before audio, maybe we highlight the LAST few items?
-                        // Or just keep the simple logic: Last item is "Dreaming", others are "Written".
-                        final isLast = index == _transcript.length - 1;
-                        
-                        return TextSpan(
-                          text: "$text ",
-                          style: TextStyle(
-                            fontSize: 20,
-                            height: 1.6,
-                            fontFamily: 'Georgia',
-                            color: isLast ? textColor : dimColor,
-                            fontWeight: isLast ? FontWeight.w500 : FontWeight.normal,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (_storyTitle != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16.0),
+                          child: Text(
+                            _storyTitle!,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                              fontFamily: 'Georgia',
+                              color: textColor,
+                            ),
                           ),
-                        );
-                      }).toList(),
-                    ),
+                        ),
+                      
+                      // Visual Scene (Image)
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 800),
+                        curve: Curves.easeOutQuart,
+                        child: _storyImage == null
+                            ? const SizedBox.shrink()
+                            : Padding(
+                                padding: const EdgeInsets.only(bottom: 24.0),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Image.memory(
+                                    _storyImage!,
+                                    fit: BoxFit.cover,
+                                    frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                                      if (wasSynchronouslyLoaded) return child;
+                                      return AnimatedOpacity(
+                                        opacity: frame == null ? 0 : 1,
+                                        duration: const Duration(seconds: 1),
+                                        curve: Curves.easeOut,
+                                        child: child,
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ),
+                      ),
+
+                      SelectableText.rich(
+                        TextSpan(
+                          children: _transcript.asMap().entries.map((entry) {
+                            final index = entry.key;
+                            final text = entry.value;
+                            // Highlight logic: Since text arrives before audio, maybe we highlight the LAST few items?
+                            // Or just keep the simple logic: Last item is "Dreaming", others are "Written".
+                            final isLast = index == _transcript.length - 1;
+                            
+                            return TextSpan(
+                              text: "$text ",
+                              style: TextStyle(
+                                fontSize: 20,
+                                height: 1.6,
+                                fontFamily: 'Georgia',
+                                color: isLast ? textColor : dimColor,
+                                fontWeight: isLast ? FontWeight.w500 : FontWeight.normal,
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -323,25 +400,25 @@ class _EchoScreenState extends State<EchoScreen> {
             
             const SizedBox(height: 24), 
             
-            // Suggestions
-            if (!_isStreaming || _status == "Ready")
-              Wrap(
-                spacing: 8.0,
-                runSpacing: 8.0,
-                alignment: WrapAlignment.center,
-                children: _suggestions.map((s) => ActionChip(
-                  label: Text(s),
-                  onPressed: () => _sendMessage(s),
-                  backgroundColor: isDark ? Colors.white10 : Colors.grey[200],
-                  labelStyle: TextStyle(color: textColor),
-                )).toList(),
-              ),
-            
-            const SizedBox(height: 24),
-
             // Input Area
             Row(
               children: [
+                Expanded(
+                  child: TextField(
+                    controller: _controller,
+                    style: TextStyle(color: textColor),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: isDark ? Colors.white10 : Colors.grey[100],
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
+                      hintText: "Enter your story topic...",
+                      hintStyle: TextStyle(color: dimColor),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                    ),
+                    onSubmitted: (val) => _sendMessage(val),
+                  ),
+                ),
+                const SizedBox(width: 12),
                 // Voice Selector
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -352,7 +429,7 @@ class _EchoScreenState extends State<EchoScreen> {
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
                       value: _selectedVoice,
-                      icon: Icon(Icons.arrow_drop_down, color: textColor),
+                      icon: Icon(Icons.record_voice_over, color: textColor, size: 20),
                       dropdownColor: isDark ? Colors.grey[900] : Colors.white,
                       style: TextStyle(color: textColor),
                       onChanged: _isStreaming ? null : (String? newValue) {
@@ -371,20 +448,37 @@ class _EchoScreenState extends State<EchoScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    style: TextStyle(color: textColor),
-                    decoration: InputDecoration(
-                      filled: true,
-                      fillColor: isDark ? Colors.white10 : Colors.grey[100],
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
-                      hintText: "Enter a topic...",
-                      hintStyle: TextStyle(color: dimColor),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                const SizedBox(width: 8),
+                // Model Selector
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.white10 : Colors.grey[200],
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _selectedTTSModel,
+                      icon: Icon(Icons.psychology, color: textColor, size: 20),
+                      dropdownColor: isDark ? Colors.grey[900] : Colors.white,
+                      style: TextStyle(color: textColor),
+                      onChanged: _isStreaming ? null : (String? newValue) {
+                        if (newValue != null) {
+                          setState(() {
+                            _selectedTTSModel = newValue;
+                          });
+                        }
+                      },
+                      items: _ttsModels.map<DropdownMenuItem<String>>((String value) {
+                        String label = "Flash";
+                        if (value.contains("lite")) label = "Lite";
+                        if (value.contains("pro")) label = "Pro";
+                        return DropdownMenuItem<String>(
+                          value: value,
+                          child: Text(label),
+                        );
+                      }).toList(),
                     ),
-                    onSubmitted: (val) => _sendMessage(val),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -396,6 +490,22 @@ class _EchoScreenState extends State<EchoScreen> {
                 ),
               ],
             ),
+
+            const SizedBox(height: 24),
+
+            // Suggestions (Moved Below Input)
+            if (!_isStreaming || _status == "Ready")
+              Wrap(
+                spacing: 8.0,
+                runSpacing: 8.0,
+                alignment: WrapAlignment.center,
+                children: _suggestions.map((s) => ActionChip(
+                  label: Text(s),
+                  onPressed: () => _sendMessage(s),
+                  backgroundColor: isDark ? Colors.white10 : Colors.grey[200],
+                  labelStyle: TextStyle(color: textColor),
+                )).toList(),
+              ),
           ],
         ),
       ),
