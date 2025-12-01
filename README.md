@@ -1,17 +1,43 @@
-# Project Echo: Flutter Web Streaming Audio Reference
+# The Echo Storyteller: Interactive AI Audio Experiences
 
-**Project Echo** is a reference implementation demonstrating **true low-latency audio streaming** from a Go backend to a Flutter Web client, specifically designed for AI Voice / Text-to-Speech (TTS) applications.
+**The Echo Storyteller** is a reference implementation for building **immersive, low-latency AI voice applications** on the web. It demonstrates how to combine advanced Generative AI models with real-time streaming audio to create a fluid "Choose Your Own Adventure" experience.
 
-It solves the difficult problem of playing a continuous, growing stream of raw audio bytes on the web, where standard libraries often fail due to browser container requirements.
+## 🎯 Objective
+This project highlights the power of the Google Cloud AI stack for building next-generation web experiences:
+*   **Interactive Storytelling:** Uses **Gemini 3 Pro** (Preview) to generate creative narratives that adapt to user choices.
+*   **Real-Time Voice:** Uses **Google Cloud TTS (Gemini Voices)** with `StreamingSynthesize` to speak the story as it is being written, with near-instant latency.
+    *   **Visual Context:** Uses **Gemini 3 Pro Image** to generate cinematic illustrations for every chapter on the fly.
+    *   **Adaptive UI:** Features a responsive layout that transitions between a linear mobile feed and a side-by-side "Book & Illustration" desktop view.
+    *   **True Web Streaming:** Demonstrates a robust **WebSocket + Web Audio API** architecture that bypasses standard browser media limitations for gapless, low-latency PCM streaming.
+## 🎮 How to Use
 
-## 🚀 Features
+1.  **Start a Story:**
+    *   Open the app and select a **Voice** (e.g., Puck, Zephyr) and **TTS Model** (Flash, Lite, Pro).
+    *   Type a topic (e.g., "A cyberpunk detective finding a lost cat") or click the **Refresh** button to get AI-generated ideas.
+    *   Click **Go** (Auto-Awesome).
 
-*   **Protocol:** WebSockets (Binary) for low-overhead bidirectional communication.
-*   **TTS Engine:** Google Cloud Text-to-Speech (v1) `StreamingSynthesize`.
-*   **GenAI Engine:** Vertex AI (Gemini 2.5 Flash) for low-latency text generation.
-*   **Audio Format:** Raw PCM (`LINEAR16`) @ 24kHz.
-*   **Playback:** Custom **Web Audio API** implementation (`AudioContext`) via Dart JS Interop.
-*   **Latency:** Sub-second Time-to-First-Byte (TTFB).
+2.  **Listen & Watch:**
+    *   The story begins immediately. Text streams in, audio plays in sync, and a unique illustration fades in.
+    *   The app handles "Infinite Scrolling" so you can read back through previous chapters.
+
+3.  **Choose Your Path:**
+    *   At the end of a chapter, the AI suggests 3 **"What happens next?"** options.
+    *   Click one to continue the story seamlessly, or type your own custom action.
+    *   The story context is preserved, creating a coherent multi-chapter narrative.
+
+4.  **Reset:**
+    *   Click the **"End Story"** chip to clear the context and start a fresh adventure.
+
+## 🚀 Tech Stack Highlights
+
+*   **Frontend:** Flutter Web (WASM ready).
+    *   **Audio Engine:** Custom `PcmPlayer` using `dart:js_interop` and the **Web Audio API** (`AudioContext`) for raw PCM playback. Standard audio players cannot handle this low-latency stream.
+    *   **State:** "Rolling Summary" context management for infinite story depth.
+*   **Backend:** Go (Golang) 1.25+.
+    *   **Orchestration:** A **Producer-Consumer** concurrent pipeline handles Text Generation, Image Generation, and Audio Synthesis in parallel to minimize TTFB (Time To First Byte).
+    *   **Gemini 3 Pro:** Powering the core narrative and image generation.
+    *   **Gemini 2.5 Flash:** Powering the high-speed summarization and option generation.
+    *   **Quantized Streaming:** Implements a robust re-connection strategy for Gemini TTS to bypass server-side context limits while maintaining a continuous stream.
 
 ## 🛠️ The Architecture
 
@@ -26,24 +52,13 @@ Project Echo bypasses the browser's media demuxer entirely by using the **Web Au
 
 1.  **Backend (Go):**
     *   Receives Text Topic.
-    *   Generates Story stream using Gemini (Vertex AI).
-    *   Buffers sentences.
-    *   Calls `tts.StreamingSynthesize` (LINEAR16).
+    *   **Producer:** Generates Story (Gemini 3 Pro) & Image (Gemini 3 Image) concurrently.
+    *   **Consumer:** buffers sentences and calls `tts.StreamingSynthesize` (LINEAR16) for each sentence to ensure stable prosody.
     *   Forwards raw `AudioContent` bytes to WebSocket.
 2.  **Frontend (Flutter):**
     *   Receives `Uint8List` chunks.
     *   Converts `Int16` (PCM) bytes to `Float32` audio data.
     *   Schedules `AudioBuffer` playback precisely using `AudioContext.currentTime`.
-
-## 📦 Tech Stack
-
-*   **Frontend:** Flutter (Web Target)
-    *   `package:web` (Modern JS Interop)
-    *   `web_socket_channel`
-*   **Backend:** Go 1.25+
-    *   `github.com/gorilla/websocket`
-    *   `cloud.google.com/go/texttospeech/apiv1`
-    *   `google.golang.org/genai` (Vertex AI)
 
 ## 🚦 Quick Start
 

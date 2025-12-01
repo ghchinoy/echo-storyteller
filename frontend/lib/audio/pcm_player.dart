@@ -93,6 +93,24 @@ class PcmPlayer {
 
     _nextPlayTime += buffer.duration;
   }
+
+  /// Stops playback immediately and resets the audio context.
+  /// Can be re-initialized by calling [init] or [feed].
+  void stop() {
+    if (_audioContext != null) {
+      try {
+        _audioContext!.close();
+      } catch (e) {
+        debugPrint("Error closing AudioContext: $e");
+      }
+    }
+    _audioContext = null;
+    _isInitialized = false;
+    _nextPlayTime = 0;
+    _scheduledNodes = 0;
+    _playedNodes = 0;
+    _isPlayingController.add(false);
+  }
   
   void dispose() {
     _audioContext?.close();

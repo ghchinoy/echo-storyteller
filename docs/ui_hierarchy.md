@@ -8,29 +8,40 @@
 *   **Structure:**
     *   `Scaffold`
         *   `AppBar`
-            *   Title: "The Echo Storyteller" (or "The Echo Storyteller: [Story Title]")
+            *   Title: "**The Infinite Storyteller**" (or "The Infinite Storyteller: [Story Title]")
             *   Actions: Theme Toggle, Refresh.
-        *   `Body` -> `Column`
-            1.  **Header Info** (`Wrap`)
-                *   **Status Chip:** Connection State + Latency (TTFB).
-                *   **Metadata Chips:** Voice Name (Tooltip: Model/Encoding) + Persona (Tooltip: Persona).
-            2.  **The Book** (`Expanded` -> `Container` -> `SingleChildScrollView`)
-                *   **Content:** `Column` of **Chapters**.
-                *   **Chapter Structure:**
-                    *   **Title:** (`Text` - H1 Style) - *If available for this chapter.*
-                    *   **Image:** (`AnimatedSize` -> `Image.memory`) - *Smooth entrance.*
-                    *   **Body Text:** (`SelectableText` - Georgia Font).
-                    *   **Divider:** (`Divider`) - Visual separation between chapters.
-            3.  **Plot Suggestions** (`Column` -> `Wrap` -> `ActionChip`)
-                *   *Condition:* Visible when story pauses (not streaming) and suggestions are available.
-                *   *Label:* "What happens next?"
-            4.  **Input Area** (`Row`)
-                *   **Story Input:** `TextField` (Rounded, Themed Fill).
-                *   **Voice Selector:** `DropdownButton` (Puck, Zephyr, etc.).
-                *   **Model Selector:** `DropdownButton` (Flash, Lite, Pro).
-                *   **Send Button:** `FloatingActionButton` (Auto-Awesome Icon).
-            5.  **Quick Start Suggestions** (`Wrap` -> `ActionChip`)
-                *   *Condition:* Only shown when story is empty (fresh state).
+        *   `Body` -> `LayoutBuilder`
+            *   **Desktop (>800px):** `Row`
+                *   `AnimatedContainer` (**Main Content**) - *Animates width (100% -> 50%).*
+                *   `AnimatedContainer` (**Visual Panel**) - *Animates width (0% -> 50%).*
+            *   **Mobile:** `Main Content`
+            
+    *   **Main Content** (`Padding` -> `Column`)
+        1.  **Header Info** (`Wrap`)
+            *   **Status Chip:** Connection State + Latency (TTFB).
+            *   **Metadata Chips:** Voice Name (Tooltip: Model/Encoding) + Persona (Tooltip: Persona).
+        2.  **The Book** (`Expanded` -> `Container` -> `SingleChildScrollView`)
+            *   **Content:** `Column` of **Chapters**.
+            *   **Chapter Structure (`_ChapterView`):**
+                *   **Title:** (`Text` - H1 Style).
+                *   **Image (Mobile Only):** (`AnimatedSize` -> `Image.memory`) - *Inline.*
+                *   **Body Text:** (`SelectableText` - Georgia Font, ~16-18pt).
+                *   **Divider:** Visual separation between chapters.
+        3.  **Plot Suggestions** (`AnimatedSize` -> `Column`)
+            *   *Condition:* Visible when suggestions are available (Fixed between Book and Input).
+            *   *Label:* "What happens next?"
+            *   *Action:* "End Story" chip to reset context.
+        4.  **Input Area** (`Row`)
+            *   `TextField`, `Voice/Model Selectors`, `FAB`.
+        5.  **Quick Start Suggestions** (`Wrap` -> `ActionChip`)
+            *   *Condition:* Only shown when story is empty (fresh state).
+            *   *Action:* "Refresh" button (AI Prompt Gen).
+
+    *   **Visual Panel (Desktop Only)** (`AnimatedContainer`)
+        *   **Background:** Black.
+        *   **Content:** `Center` -> `GestureDetector` -> `AnimatedSwitcher` -> `Image.memory` (Latest Image).
+        *   **Interaction:** Tap to open Lightbox Dialog.
+        *   **Placeholder:** Icon + Text ("Visuals will appear here") if no image yet.
 
 ## State Management
 

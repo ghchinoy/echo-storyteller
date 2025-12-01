@@ -115,6 +115,21 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("Topic: %s | Voice: %s | TTS Model: %s", topic, voice, ttsModel)
 
+		if topic == "__GET_PROMPTS__" && genaiClient != nil {
+			log.Printf("Handling Prompt Generation Request")
+			prompts, err := GeneratePrompts(ctx, genaiClient)
+			if err == nil {
+				msg, _ := json.Marshal(StoryResponse{Type: "quick_start", Data: prompts})
+				// Use a mutex protected write if possible, but here we are in the main loop, so it is safe provided we don't have concurrent writes from other goroutines *yet* (since we haven't started streamStory).
+				// Actually, `streamStory` uses `wsMu`. `handleWebSocket` writes directly.
+				// We should probably share the mutex or just write directly since this is synchronous request/response in the main loop.
+				conn.WriteMessage(websocket.TextMessage, msg)
+			} else {
+				log.Printf("Prompt Gen Error: %v", err)
+			}
+			continue
+		}
+
 		if genaiClient != nil {
 			if err := streamStory(ctx, genaiClient, ttsClient, conn, topic, voice, ttsModel, storyContext); err != nil {
 				log.Printf("Story Error: %v", err)
@@ -184,15 +199,23 @@ New Segment: %s
 
 func GenerateSuggestions(ctx context.Context, client *genai.Client, summary string) ([]string, error) {
 	model := getEnv("GEMINI_MODEL_SUMMARY", "gemini-2.5-flash-preview-09-2025") // Re-use flash
+	
+	respSchema := &genai.Schema{
+		Type: genai.TypeArray,
+		Items: &genai.Schema{
+			Type: genai.TypeString,
+		},
+	}
+
 	prompt := fmt.Sprintf(`
 Based on this story summary: "%s", suggest 3 short, intriguing plot continuations or user actions.
 Keep them under 10 words each.
-Format: JSON list of strings. Example: ["Open the door", "Run away"]
 `, summary)
 
 	log.Printf("Generating suggestions with model: %s", model)
 	resp, err := client.Models.GenerateContent(ctx, model, genai.Text(prompt), &genai.GenerateContentConfig{
 		ResponseMIMEType: "application/json",
+		ResponseSchema:   respSchema,
 	})
 	if err != nil {
 		return nil, err
@@ -212,6 +235,54 @@ Format: JSON list of strings. Example: ["Open the door", "Run away"]
 		log.Printf("Failed to unmarshal suggestions JSON: %s", text)
 	}
 	return []string{"Continue..."}, nil
+}
+
+func GeneratePrompts(ctx context.Context, client *genai.Client) ([]string, error) {
+	model := getEnv("GEMINI_MODEL_SUMMARY", "gemini-2.5-flash-preview-09-2025")
+
+	respSchema := &genai.Schema{
+		Type: genai.TypeArray,
+		Items: &genai.Schema{
+			Type: genai.TypeString,
+		},
+	}
+
+	prompt := `
+Generate 4 creative, diverse, and intriguing short story prompts (under 10 words each).
+Reference Examples:
+- "A cyberpunk detective in Neo-Tokyo"
+- "A lonely robot on Mars"
+- "The secret history of cats"
+- "A wizard who lost his hat"
+- "The last library on Earth"
+- "A ghost who is afraid of the dark"
+- "The day the internet stopped working"
+- "A squirrel who thinks he is a king"
+- "Finding a door in an oak tree"
+- "The coffee shop at the end of time"
+`
+	log.Printf("Generating prompts with model: %s", model)
+	resp, err := client.Models.GenerateContent(ctx, model, genai.Text(prompt), &genai.GenerateContentConfig{
+		ResponseMIMEType: "application/json",
+		ResponseSchema:   respSchema,
+	})
+	if err != nil {
+		return nil, err
+	}
+	
+	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
+		var prompts []string
+		text := resp.Candidates[0].Content.Parts[0].Text
+		text = strings.TrimPrefix(text, "```json")
+		text = strings.TrimPrefix(text, "```")
+		text = strings.TrimSuffix(text, "```")
+		
+		if err := json.Unmarshal([]byte(text), &prompts); err == nil {
+			return prompts, nil
+		}
+		log.Printf("Failed to unmarshal prompts JSON: %s", text)
+	}
+	return []string{"A robot finding love", "The last tree on Earth", "A time traveler's mistake", "Whispers in the dark"}, nil
 }
 
 func streamStory(ctx context.Context, genClient *genai.Client, ttsClient *texttospeech.Client, wsConn *websocket.Conn, topic string, voice string, ttsModel string, storyContext string) error {

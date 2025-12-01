@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'audio/pcm_player.dart';
+import 'models/chapter.dart';
+import 'widgets/chapter_view.dart';
 
 void main() {
   runApp(const EchoApp());
@@ -67,14 +69,6 @@ class EchoScreen extends StatefulWidget {
   State<EchoScreen> createState() => _EchoScreenState();
 }
 
-class Chapter {
-  String? title;
-  Uint8List? image;
-  final StringBuffer textBuffer = StringBuffer();
-  
-  String get text => textBuffer.toString();
-}
-
 class _EchoScreenState extends State<EchoScreen> {
   final TextEditingController _controller = TextEditingController();
   WebSocketChannel? _channel;
@@ -88,6 +82,7 @@ class _EchoScreenState extends State<EchoScreen> {
   final List<Chapter> _chapters = [];
   String? _context;
   List<String> _plotSuggestions = [];
+  bool _isRefreshingPrompts = false;
   
   final ScrollController _scrollController = ScrollController();
 
@@ -109,7 +104,7 @@ class _EchoScreenState extends State<EchoScreen> {
     "Vindemiatrix", "Zephyr", "Zubenelgenubi",
   ];
 
-  final List<String> _suggestions = [
+  List<String> _suggestions = [
     "A cyberpunk detective in Neo-Tokyo.",
     "A lonely robot on Mars.",
     "The secret history of cats.",
@@ -179,6 +174,11 @@ class _EchoScreenState extends State<EchoScreen> {
                 if (data['data'] is List) {
                   _plotSuggestions = List<String>.from(data['data']);
                 }
+              } else if (type == 'quick_start') {
+                if (data['data'] is List) {
+                  _suggestions = List<String>.from(data['data']);
+                  _isRefreshingPrompts = false;
+                }
               } else {
                 // Sentence
                 if (_chapters.isEmpty) _chapters.add(Chapter());
@@ -246,6 +246,64 @@ class _EchoScreenState extends State<EchoScreen> {
     }
   }
 
+  void _refreshPrompts() {
+    if (_channel != null) {
+      setState(() {
+        _isRefreshingPrompts = true;
+      });
+      // Send special command
+      final payload = jsonEncode({
+        "topic": "__GET_PROMPTS__",
+        "voice": _selectedVoice,
+      });
+      _channel!.sink.add(payload);
+    }
+  }
+
+  void _endStory() {
+    _player.stop();
+    setState(() {
+      _plotSuggestions = [];
+      _context = null;
+      _controller.clear();
+    });
+  }
+
+  void _showImageDialog(Uint8List imageBytes) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(24),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return Stack(
+              alignment: Alignment.center,
+              children: [
+                InteractiveViewer(
+                  maxScale: 4.0,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.memory(imageBytes),
+                  ),
+                ),
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: IconButton.styleFrom(backgroundColor: Colors.black54),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _channel?.sink.close();
@@ -267,8 +325,8 @@ class _EchoScreenState extends State<EchoScreen> {
         elevation: 0,
         title: Text(
           (_chapters.isNotEmpty && _chapters.first.title != null) 
-              ? "The Echo Storyteller: ${_chapters.first.title}" 
-              : "The Echo Storyteller",
+              ? "The Infinite Storyteller: ${_chapters.first.title}" 
+              : "The Infinite Storyteller",
           style: TextStyle(color: textColor),
         ),
         actions: [
@@ -298,7 +356,6 @@ class _EchoScreenState extends State<EchoScreen> {
               spacing: 12,
               runSpacing: 8,
               children: [
-                // Status
                 Chip(
                   backgroundColor: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
                   side: BorderSide.none,
@@ -307,14 +364,12 @@ class _EchoScreenState extends State<EchoScreen> {
                       : Icon(Icons.circle, size: 12, color: _status == "Connected" ? Colors.green : Colors.grey),
                   label: Text(_status),
                 ),
-                // Latency
                 if (_ttfb != null)
                   Chip(
                     backgroundColor: Colors.green.withValues(alpha: 0.1),
                     side: BorderSide(color: Colors.green.withValues(alpha: 0.3)),
                     label: Text("TTFB: ${_ttfb}ms", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                   ),
-                // Voice Info
                 Tooltip(
                   message: "Model: $_selectedTTSModel\nEncoding: LINEAR16 (24kHz)",
                   child: Chip(
@@ -322,9 +377,9 @@ class _EchoScreenState extends State<EchoScreen> {
                     label: Text("Voice: $_selectedVoice"),
                   ),
                 ),
-                // Persona Info
                 Tooltip(
-                                        message: "Persona:\n$_stylePrompt",                  child: const Chip(
+                  message: "Persona:\n$_stylePrompt",
+                  child: const Chip(
                     avatar: Icon(Icons.psychology, size: 16),
                     label: Text("Persona: Storyteller"),
                   ),
@@ -334,92 +389,113 @@ class _EchoScreenState extends State<EchoScreen> {
 
             const SizedBox(height: 16),
 
-            // The Book (Rich Text View)
+            // The Book Area (Split or Single)
             Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: cardColor,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: isDark ? Colors.white10 : Colors.black12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.05),
-                      blurRadius: 10,
-                      spreadRadius: 2,
-                    )
-                  ],
-                ),
-                child: SingleChildScrollView(
-                  controller: _scrollController,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      ..._chapters.map((chapter) => Column(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isDesktop = constraints.maxWidth > 800;
+                  
+                  // Common Scrollable List (Text Only on Desktop, Text+Image on Mobile)
+                  final scrollableList = Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: cardColor,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: isDark ? Colors.white10 : Colors.black12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.05),
+                          blurRadius: 10,
+                          spreadRadius: 2,
+                        )
+                      ],
+                    ),
+                    child: SingleChildScrollView(
+                      controller: _scrollController,
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          if (chapter.title != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 24.0, bottom: 16.0),
-                              child: Text(
-                                chapter.title!,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.bold,
-                                  fontFamily: 'Georgia',
-                                  color: textColor,
-                                ),
-                              ),
-                            ),
-                          
-                          // Chapter Image
-                          AnimatedSize(
-                            duration: const Duration(milliseconds: 800),
-                            curve: Curves.easeOutQuart,
-                            child: chapter.image == null
-                                ? const SizedBox.shrink()
-                                : Padding(
-                                    padding: const EdgeInsets.only(bottom: 24.0),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(12),
-                                      child: Image.memory(
-                                        chapter.image!,
-                                        fit: BoxFit.cover,
-                                        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-                                          if (wasSynchronouslyLoaded) return child;
-                                          return AnimatedOpacity(
-                                            opacity: frame == null ? 0 : 1,
-                                            duration: const Duration(seconds: 1),
-                                            curve: Curves.easeOut,
-                                            child: child,
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                          ),
-
-                          // Chapter Text
-                          SelectableText(
-                            chapter.text,
-                            style: TextStyle(
-                              fontSize: 20,
-                              height: 1.6,
-                              fontFamily: 'Georgia',
-                              color: textColor, // Simplify color logic for now (all black/white)
-                            ),
-                          ),
-                          const Divider(height: 48, thickness: 0.5),
+                          ..._chapters.map((chapter) => ChapterView(
+                            chapter: chapter, 
+                            textColor: textColor,
+                            showImage: !isDesktop, // Hide inline image on desktop
+                          )),
                         ],
-                      )),
-                    ],
-                  ),
-                ),
+                      ),
+                    ),
+                  );
+
+                  if (isDesktop) {
+                    final bool hasImages = _chapters.isNotEmpty && _chapters.any((c) => c.image != null);
+                    final double totalWidth = constraints.maxWidth;
+                    // If hasImages, split 50/50 with 24px gap. 
+                    // Left width = (total - 24) / 2. Right width = (total - 24) / 2.
+                    // If no images, Left = totalWidth, Right = 0.
+                    
+                    final double gap = 24.0;
+                    final double imagePanelWidth = hasImages ? (totalWidth - gap) / 2 : 0;
+                    final double textPanelWidth = hasImages ? (totalWidth - gap) / 2 : totalWidth;
+
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Left: Text (Animated Width)
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 800),
+                          curve: Curves.easeOutQuart,
+                          width: textPanelWidth,
+                          child: scrollableList,
+                        ),
+                        
+                        // Gap
+                        if (hasImages) SizedBox(width: gap),
+                        
+                        // Right: Fixed Image Panel (Animated Width)
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 800),
+                          curve: Curves.easeOutQuart,
+                          width: imagePanelWidth,
+                          child: hasImages 
+                              ? Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.black,
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(color: Colors.white10),
+                                  ),
+                                  child: Center(
+                                    child: _chapters.isNotEmpty && _chapters.last.image != null
+                                        ? GestureDetector(
+                                            onTap: () => _showImageDialog(_chapters.last.image!),
+                                            child: ClipRRect(
+                                              borderRadius: BorderRadius.circular(16),
+                                              child: AnimatedSwitcher(
+                                                duration: const Duration(milliseconds: 800),
+                                                child: Image.memory(
+                                                  _chapters.last.image!,
+                                                  key: ValueKey(_chapters.last.hashCode),
+                                                  fit: BoxFit.contain,
+                                                ),
+                                              ),
+                                            ),
+                                          )
+                                        : const SizedBox.shrink(), // Or loader
+                                  ),
+                                )
+                              : const SizedBox.shrink(),
+                        ),
+                      ],
+                    );
+                  } else {
+                    // Mobile: Single Column (Just the list, images are inline)
+                    return scrollableList;
+                  }
+                },
               ),
             ),
             
-            // Plot Suggestions (Fixed between Book and Input)
+            const SizedBox(height: 16),
+
+            // Suggestions
             AnimatedSize(
               duration: const Duration(milliseconds: 500),
               curve: Curves.easeOutQuart,
@@ -434,13 +510,23 @@ class _EchoScreenState extends State<EchoScreen> {
                           spacing: 8.0,
                           runSpacing: 8.0,
                           alignment: WrapAlignment.center,
-                          children: _plotSuggestions.map((s) => ActionChip(
-                            label: Text(s),
-                            onPressed: () => _sendMessage(s, keepContext: true),
-                            backgroundColor: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
-                            side: BorderSide(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.5)),
-                            labelStyle: TextStyle(color: textColor),
-                          )).toList(),
+                          children: [
+                            ..._plotSuggestions.map((s) => ActionChip(
+                              label: Text(s),
+                              onPressed: () => _sendMessage(s, keepContext: true),
+                              backgroundColor: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                              side: BorderSide(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.5)),
+                              labelStyle: TextStyle(color: textColor),
+                            )),
+                            ActionChip(
+                              avatar: const Icon(Icons.stop_circle_outlined, size: 16, color: Colors.redAccent),
+                              label: const Text("End Story"),
+                              onPressed: _endStory,
+                              backgroundColor: Colors.red.withValues(alpha: 0.1),
+                              side: BorderSide(color: Colors.redAccent.withValues(alpha: 0.5)),
+                              labelStyle: const TextStyle(color: Colors.redAccent),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 16),
                       ],
@@ -467,7 +553,6 @@ class _EchoScreenState extends State<EchoScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                // Voice Selector
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
@@ -497,7 +582,6 @@ class _EchoScreenState extends State<EchoScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                // Model Selector
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
@@ -543,16 +627,30 @@ class _EchoScreenState extends State<EchoScreen> {
 
             // Quick Start Suggestions (Only on empty state)
             if (_chapters.isEmpty && !_isStreaming)
-              Wrap(
-                spacing: 8.0,
-                runSpacing: 8.0,
-                alignment: WrapAlignment.center,
-                children: _suggestions.map((s) => ActionChip(
-                  label: Text(s),
-                  onPressed: () => _sendMessage(s, keepContext: false),
-                  backgroundColor: isDark ? Colors.white10 : Colors.grey[200],
-                  labelStyle: TextStyle(color: textColor),
-                )).toList(),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Wrap(
+                      spacing: 8.0,
+                      runSpacing: 8.0,
+                      alignment: WrapAlignment.center,
+                      children: _suggestions.map((s) => ActionChip(
+                        label: Text(s),
+                        onPressed: () => _sendMessage(s, keepContext: false),
+                        backgroundColor: isDark ? Colors.white10 : Colors.grey[200],
+                        labelStyle: TextStyle(color: textColor),
+                      )).toList(),
+                    ),
+                  ),
+                  IconButton(
+                    icon: _isRefreshingPrompts 
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                        : Icon(Icons.refresh, color: dimColor),
+                    onPressed: _refreshPrompts,
+                    tooltip: "New Ideas",
+                  ),
+                ],
               ),
           ],
         ),

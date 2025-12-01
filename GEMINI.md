@@ -50,6 +50,7 @@
 
 *   **Living Documents:** `docs/architecture.md` must be updated if the protocol changes.
 *   **UI Hierarchy:** `docs/ui_hierarchy.md` must be updated whenever the Flutter UI layout or widget structure is modified. This ensures accurate reference for future features and debugging.
+*   **Project Overview:** `README.md` must be kept up-to-date with the project's technical capabilities, objective, and "How to Use" instructions to serve as the primary entry point for developers.
 *   **Diagrams:** Use Mermaid for sequence diagrams to visualize the buffer flow.
 
 ## 5. Task Management (`bd`)
