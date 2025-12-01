@@ -26,11 +26,13 @@ type StoryRequest struct {
 	Topic    string `json:"topic"`
 	Voice    string `json:"voice"`
 	TTSModel string `json:"tts_model"`
+	Context  string `json:"context"`
 }
 
 type StoryResponse struct {
-	Type    string `json:"type"` // "title" or "sentence"
-	Content string `json:"content"`
+	Type    string      `json:"type"` // "title", "sentence", "image", "suggestions", "context"
+	Content string      `json:"content,omitempty"`
+	Data    interface{} `json:"data,omitempty"`
 }
 
 func main() {
@@ -95,6 +97,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		var topic string
 		var voice string = "Puck"
 		var ttsModel string = "gemini-2.5-flash-tts"
+		var storyContext string
 
 		var req StoryRequest
 		if err := json.Unmarshal(message, &req); err == nil && req.Topic != "" {
@@ -105,6 +108,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if req.TTSModel != "" {
 				ttsModel = req.TTSModel
 			}
+			storyContext = req.Context
 		} else {
 			topic = string(message)
 		}
@@ -112,7 +116,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Topic: %s | Voice: %s | TTS Model: %s", topic, voice, ttsModel)
 
 		if genaiClient != nil {
-			if err := streamStory(ctx, genaiClient, ttsClient, conn, topic, voice, ttsModel); err != nil {
+			if err := streamStory(ctx, genaiClient, ttsClient, conn, topic, voice, ttsModel, storyContext); err != nil {
 				log.Printf("Story Error: %v", err)
 			}
 		} else {
@@ -121,11 +125,18 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
 func GenerateImage(ctx context.Context, client *genai.Client, prompt string) (string, error) {
 	// Use gemini-3-pro-image-preview for high quality illustrations
-	model := "gemini-3-pro-image-preview"
+	model := getEnv("GEMINI_MODEL_IMAGE", "gemini-3-pro-image-preview")
 	
-	log.Printf("Generating image for prompt: %s", prompt)
+	log.Printf("Generating image for prompt: %s using model: %s", prompt, model)
 
 	// We want a square image for the storybook feel (or 16:9, but default 1:1 is fine)
 	// The SDK might change config, but basic GenerateContent with text -> image modality is standard.
@@ -151,7 +162,59 @@ func GenerateImage(ctx context.Context, client *genai.Client, prompt string) (st
 	return "", fmt.Errorf("no inline image data found")
 }
 
-func streamStory(ctx context.Context, genClient *genai.Client, ttsClient *texttospeech.Client, wsConn *websocket.Conn, topic string, voice string, ttsModel string) error {
+func SummarizeStory(ctx context.Context, client *genai.Client, oldContext, newChapter string) (string, error) {
+	model := getEnv("GEMINI_MODEL_SUMMARY", "gemini-2.5-flash-preview-09-2025") // Fast model
+	prompt := fmt.Sprintf(`
+Summarize the following story segment, merging it with the previous context. 
+Keep key characters, current location, and plot points concise (max 100 words).
+Previous Context: %s
+New Segment: %s
+`, oldContext, newChapter)
+
+	log.Printf("Summarizing story with model: %s", model)
+	resp, err := client.Models.GenerateContent(ctx, model, genai.Text(prompt), nil)
+	if err != nil {
+		return "", err
+	}
+	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
+		return resp.Candidates[0].Content.Parts[0].Text, nil
+	}
+	return "", fmt.Errorf("no summary generated")
+}
+
+func GenerateSuggestions(ctx context.Context, client *genai.Client, summary string) ([]string, error) {
+	model := getEnv("GEMINI_MODEL_SUMMARY", "gemini-2.5-flash-preview-09-2025") // Re-use flash
+	prompt := fmt.Sprintf(`
+Based on this story summary: "%s", suggest 3 short, intriguing plot continuations or user actions.
+Keep them under 10 words each.
+Format: JSON list of strings. Example: ["Open the door", "Run away"]
+`, summary)
+
+	log.Printf("Generating suggestions with model: %s", model)
+	resp, err := client.Models.GenerateContent(ctx, model, genai.Text(prompt), &genai.GenerateContentConfig{
+		ResponseMIMEType: "application/json",
+	})
+	if err != nil {
+		return nil, err
+	}
+	
+	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
+		var suggestions []string
+		text := resp.Candidates[0].Content.Parts[0].Text
+		// Clean up potential markdown code blocks
+		text = strings.TrimPrefix(text, "```json")
+		text = strings.TrimPrefix(text, "```")
+		text = strings.TrimSuffix(text, "```")
+		
+		if err := json.Unmarshal([]byte(text), &suggestions); err == nil {
+			return suggestions, nil
+		}
+		log.Printf("Failed to unmarshal suggestions JSON: %s", text)
+	}
+	return []string{"Continue..."}, nil
+}
+
+func streamStory(ctx context.Context, genClient *genai.Client, ttsClient *texttospeech.Client, wsConn *websocket.Conn, topic string, voice string, ttsModel string, storyContext string) error {
 	log.Printf("Starting Story Generation for topic: %s (Voice: %s, TTS Model: %s)", topic, voice, ttsModel)
 
 	var wsMu sync.Mutex
@@ -224,6 +287,7 @@ func streamStory(ctx context.Context, genClient *genai.Client, ttsClient *textto
 You are a master storyteller. 
 Your audience is listening to this story, so use evocative language, clear imagery, and a natural rhythm. 
 Topic: %s
+%s
 
 Instructions:
 1. First, provide a creative Title for the story in the format: "Title: [Your Title]".
@@ -231,10 +295,16 @@ Instructions:
 3. Focus on sensory details (sight, sound, smell).
 4. Ensure a clear narrative arc with a satisfying conclusion.
 5. Avoid markdown formatting (like bold or italics) as this is for TTS.
-`, topic)
+`, topic, func() string {
+		if storyContext != "" {
+			return fmt.Sprintf("Previous Story Context: %s\nContinue the story naturally from this context.", storyContext)
+		}
+		return ""
+	}())
 	log.Printf("Gemini Prompt: %s", prompt)
 
-	iter := genClient.Models.GenerateContentStream(ctx, "gemini-3-pro-preview", genai.Text(prompt), nil)
+	storyModel := getEnv("GEMINI_MODEL_STORY", "gemini-3-pro-preview")
+	iter := genClient.Models.GenerateContentStream(ctx, storyModel, genai.Text(prompt), nil)
 
 	// Trigger Image Generation (Parallel)
 	go func() {
@@ -261,6 +331,8 @@ Instructions:
 		defer close(errChan)
 
 		var buffer strings.Builder
+		var fullStory strings.Builder
+
 		for resp, err := range iter {
 			if err != nil {
 				log.Printf("Gemini Stream Error: %v", err)
@@ -271,6 +343,7 @@ Instructions:
 			for _, part := range resp.Candidates[0].Content.Parts {
 				if part.Text != "" {
 					buffer.WriteString(part.Text)
+					fullStory.WriteString(part.Text)
 
 					// Check for Title (Line based)
 					if strings.HasPrefix(buffer.String(), "Title: ") && strings.Contains(buffer.String(), "\n") {
@@ -286,44 +359,34 @@ Instructions:
 					}
 
 					// Sentence Splitter Loop
-					// We loop to extract ALL complete sentences from the buffer
 					for {
 						text := buffer.String()
-						// Find the first punctuation mark
 						idx := strings.IndexAny(text, ".?!")
 						if idx == -1 {
-							// No punctuation found.
-							// Check hard length limit fallback (only if very long and no punctuation)
-							if len(text) > 200 { // Increased from 100 to reduce mid-sentence splits
-								// Find nearest space to split nicely
+							if len(text) > 200 {
 								spaceIdx := strings.LastIndex(text, " ")
 								if spaceIdx > 0 {
 									idx = spaceIdx
 								} else {
-									idx = len(text) // Just split it all if no spaces
+									idx = len(text)
 								}
 							} else {
-								break // Wait for more data
+								break
 							}
 						} else {
-							// Include the punctuation mark in the sentence
 							idx += 1 
 						}
 
-						// Extract the complete sentence
 						sentence := strings.TrimSpace(text[:idx])
 						remaining := text[idx:]
 
 						if len(sentence) > 0 {
-							// Filter out the Title line if it wasn't caught by the prefix check (rare)
 							if strings.HasPrefix(sentence, "Title: ") {
 								parts := strings.SplitN(sentence, "\n", 2)
 								title := strings.TrimSpace(strings.TrimPrefix(parts[0], "Title: "))
 								msg, _ := json.Marshal(StoryResponse{Type: "title", Content: title})
 								writeWS(websocket.TextMessage, msg)
-								
 								if len(parts) > 1 {
-									// The rest of the line is the actual sentence
 									sentence = parts[1]
 								} else {
 									buffer.Reset()
@@ -333,16 +396,10 @@ Instructions:
 							}
 
 							log.Printf("Generated Sentence: %s", sentence)
-
-							// 1. Send Text to Frontend
 							msg, _ := json.Marshal(StoryResponse{Type: "sentence", Content: sentence})
 							writeWS(websocket.TextMessage, msg)
-
-							// 2. Enqueue for TTS
 							sentenceChan <- sentence
 						}
-
-						// Update buffer with remainder
 						buffer.Reset()
 						buffer.WriteString(remaining)
 					}
@@ -350,7 +407,6 @@ Instructions:
 			}
 		}
 
-		// Flush remaining buffer
 		if buffer.Len() > 0 {
 			sentence := strings.TrimSpace(buffer.String())
 			if len(sentence) > 0 {
@@ -372,6 +428,25 @@ Instructions:
 			}
 		}
 		log.Printf("Gemini Stream Finished (Producer).")
+
+		// --- Post-Processing: Summary & Suggestions ---
+		newSummary, err := SummarizeStory(ctx, genClient, storyContext, fullStory.String())
+		if err == nil {
+			log.Printf("New Summary: %s", newSummary)
+			msg, _ := json.Marshal(StoryResponse{Type: "context", Content: newSummary})
+			writeWS(websocket.TextMessage, msg)
+			
+			suggestions, err := GenerateSuggestions(ctx, genClient, newSummary)
+			if err == nil {
+				log.Printf("Suggestions: %v", suggestions)
+				msg, _ := json.Marshal(StoryResponse{Type: "suggestions", Data: suggestions})
+				writeWS(websocket.TextMessage, msg)
+			} else {
+				log.Printf("Suggestion Error: %v", err)
+			}
+		} else {
+			log.Printf("Summarize Error: %v", err)
+		}
 	}()
 
 	// Consumer: TTS Playback (Main Block)

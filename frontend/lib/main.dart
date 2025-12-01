@@ -67,6 +67,14 @@ class EchoScreen extends StatefulWidget {
   State<EchoScreen> createState() => _EchoScreenState();
 }
 
+class Chapter {
+  String? title;
+  Uint8List? image;
+  final StringBuffer textBuffer = StringBuffer();
+  
+  String get text => textBuffer.toString();
+}
+
 class _EchoScreenState extends State<EchoScreen> {
   final TextEditingController _controller = TextEditingController();
   WebSocketChannel? _channel;
@@ -77,9 +85,10 @@ class _EchoScreenState extends State<EchoScreen> {
   bool _isStreaming = false;
   String _status = "Ready";
   
-  String? _storyTitle;
-  Uint8List? _storyImage;
-  final List<String> _transcript = [];
+  final List<Chapter> _chapters = [];
+  String? _context;
+  List<String> _plotSuggestions = [];
+  
   final ScrollController _scrollController = ScrollController();
 
   String _selectedVoice = "Puck";
@@ -158,18 +167,30 @@ class _EchoScreenState extends State<EchoScreen> {
 
             setState(() {
               if (type == 'title') {
-                _storyTitle = content;
+                final chapter = Chapter();
+                chapter.title = content;
+                _chapters.add(chapter);
               } else if (type == 'image') {
-                _storyImage = base64Decode(content);
+                if (_chapters.isEmpty) _chapters.add(Chapter());
+                _chapters.last.image = base64Decode(content);
+              } else if (type == 'context') {
+                _context = content;
+              } else if (type == 'suggestions') {
+                if (data['data'] is List) {
+                  _plotSuggestions = List<String>.from(data['data']);
+                }
               } else {
-                _transcript.add(content);
+                // Sentence
+                if (_chapters.isEmpty) _chapters.add(Chapter());
+                _chapters.last.textBuffer.write("$content ");
               }
             });
             _scrollToBottom();
           } catch (e) {
             // Fallback for legacy plain text (if any)
              setState(() {
-              _transcript.add(message);
+              if (_chapters.isEmpty) _chapters.add(Chapter());
+              _chapters.last.textBuffer.write("$message ");
             });
             _scrollToBottom();
           }
@@ -196,26 +217,30 @@ class _EchoScreenState extends State<EchoScreen> {
     _player.feed(chunk); // No text sync needed
   }
 
-  void _sendMessage(String text) {
+  void _sendMessage(String text, {bool keepContext = false}) {
     _player.init();
     
     if (text.isNotEmpty && _channel != null) {
       _stopwatch.reset();
       _stopwatch.start();
+      
       setState(() {
         _ttfb = null;
         _isStreaming = true;
         _status = "Dreaming...";
-        _controller.text = text;
-        _transcript.clear();
-        _storyTitle = null;
-        _storyImage = null;
+        _controller.text = keepContext ? "" : text; // Clear input if continuing? Or keep? Usually clear.
+        if (!keepContext) {
+          _chapters.clear();
+          _context = null;
+        }
+        _plotSuggestions = [];
       });
 
       final payload = jsonEncode({
         "topic": text,
         "voice": _selectedVoice,
         "tts_model": _selectedTTSModel,
+        "context": _context,
       });
       _channel!.sink.add(payload);
     }
@@ -241,7 +266,9 @@ class _EchoScreenState extends State<EchoScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: Text(
-          _storyTitle != null ? "The Echo Storyteller: $_storyTitle" : "The Echo Storyteller",
+          (_chapters.isNotEmpty && _chapters.first.title != null) 
+              ? "The Echo Storyteller: ${_chapters.first.title}" 
+              : "The Echo Storyteller",
           style: TextStyle(color: textColor),
         ),
         actions: [
@@ -328,77 +355,98 @@ class _EchoScreenState extends State<EchoScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (_storyTitle != null)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 16.0),
-                          child: Text(
-                            _storyTitle!,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold,
-                              fontFamily: 'Georgia',
-                              color: textColor,
-                            ),
-                          ),
-                        ),
-                      
-                      // Visual Scene (Image)
-                      AnimatedSize(
-                        duration: const Duration(milliseconds: 800),
-                        curve: Curves.easeOutQuart,
-                        child: _storyImage == null
-                            ? const SizedBox.shrink()
-                            : Padding(
-                                padding: const EdgeInsets.only(bottom: 24.0),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: Image.memory(
-                                    _storyImage!,
-                                    fit: BoxFit.cover,
-                                    frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-                                      if (wasSynchronouslyLoaded) return child;
-                                      return AnimatedOpacity(
-                                        opacity: frame == null ? 0 : 1,
-                                        duration: const Duration(seconds: 1),
-                                        curve: Curves.easeOut,
-                                        child: child,
-                                      );
-                                    },
-                                  ),
+                      ..._chapters.map((chapter) => Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (chapter.title != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 24.0, bottom: 16.0),
+                              child: Text(
+                                chapter.title!,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.bold,
+                                  fontFamily: 'Georgia',
+                                  color: textColor,
                                 ),
                               ),
-                      ),
+                            ),
+                          
+                          // Chapter Image
+                          AnimatedSize(
+                            duration: const Duration(milliseconds: 800),
+                            curve: Curves.easeOutQuart,
+                            child: chapter.image == null
+                                ? const SizedBox.shrink()
+                                : Padding(
+                                    padding: const EdgeInsets.only(bottom: 24.0),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Image.memory(
+                                        chapter.image!,
+                                        fit: BoxFit.cover,
+                                        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                                          if (wasSynchronouslyLoaded) return child;
+                                          return AnimatedOpacity(
+                                            opacity: frame == null ? 0 : 1,
+                                            duration: const Duration(seconds: 1),
+                                            curve: Curves.easeOut,
+                                            child: child,
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                          ),
 
-                      SelectableText.rich(
-                        TextSpan(
-                          children: _transcript.asMap().entries.map((entry) {
-                            final index = entry.key;
-                            final text = entry.value;
-                            // Highlight logic: Since text arrives before audio, maybe we highlight the LAST few items?
-                            // Or just keep the simple logic: Last item is "Dreaming", others are "Written".
-                            final isLast = index == _transcript.length - 1;
-                            
-                            return TextSpan(
-                              text: "$text ",
-                              style: TextStyle(
-                                fontSize: 20,
-                                height: 1.6,
-                                fontFamily: 'Georgia',
-                                color: isLast ? textColor : dimColor,
-                                fontWeight: isLast ? FontWeight.w500 : FontWeight.normal,
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                      ),
+                          // Chapter Text
+                          SelectableText(
+                            chapter.text,
+                            style: TextStyle(
+                              fontSize: 20,
+                              height: 1.6,
+                              fontFamily: 'Georgia',
+                              color: textColor, // Simplify color logic for now (all black/white)
+                            ),
+                          ),
+                          const Divider(height: 48, thickness: 0.5),
+                        ],
+                      )),
                     ],
                   ),
                 ),
               ),
             ),
             
-            const SizedBox(height: 24), 
+            // Plot Suggestions (Fixed between Book and Input)
+            AnimatedSize(
+              duration: const Duration(milliseconds: 500),
+              curve: Curves.easeOutQuart,
+              child: _plotSuggestions.isNotEmpty
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        const SizedBox(height: 16),
+                        Text("What happens next?", style: TextStyle(color: dimColor, fontStyle: FontStyle.italic, fontSize: 12)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8.0,
+                          runSpacing: 8.0,
+                          alignment: WrapAlignment.center,
+                          children: _plotSuggestions.map((s) => ActionChip(
+                            label: Text(s),
+                            onPressed: () => _sendMessage(s, keepContext: true),
+                            backgroundColor: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                            side: BorderSide(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.5)),
+                            labelStyle: TextStyle(color: textColor),
+                          )).toList(),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                    )
+                  : const SizedBox.shrink(),
+            ),
             
             // Input Area
             Row(
@@ -415,7 +463,7 @@ class _EchoScreenState extends State<EchoScreen> {
                       hintStyle: TextStyle(color: dimColor),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                     ),
-                    onSubmitted: (val) => _sendMessage(val),
+                    onSubmitted: (val) => _sendMessage(val, keepContext: false),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -483,7 +531,7 @@ class _EchoScreenState extends State<EchoScreen> {
                 ),
                 const SizedBox(width: 12),
                 FloatingActionButton(
-                  onPressed: () => _sendMessage(_controller.text),
+                  onPressed: () => _sendMessage(_controller.text, keepContext: false),
                   backgroundColor: Theme.of(context).colorScheme.primary,
                   foregroundColor: Colors.white,
                   child: const Icon(Icons.auto_awesome),
@@ -493,15 +541,15 @@ class _EchoScreenState extends State<EchoScreen> {
 
             const SizedBox(height: 24),
 
-            // Suggestions (Moved Below Input)
-            if (!_isStreaming || _status == "Ready")
+            // Quick Start Suggestions (Only on empty state)
+            if (_chapters.isEmpty && !_isStreaming)
               Wrap(
                 spacing: 8.0,
                 runSpacing: 8.0,
                 alignment: WrapAlignment.center,
                 children: _suggestions.map((s) => ActionChip(
                   label: Text(s),
-                  onPressed: () => _sendMessage(s),
+                  onPressed: () => _sendMessage(s, keepContext: false),
                   backgroundColor: isDark ? Colors.white10 : Colors.grey[200],
                   labelStyle: TextStyle(color: textColor),
                 )).toList(),
